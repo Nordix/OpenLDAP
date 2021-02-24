@@ -79,4 +79,5 @@ sed -e "s/@BACKEND@/${BACKEND}/"			\
 	-e "s;@TESTWD@;${TESTWD};"			\
 	-e "s;@DATADIR@;${DATADIR};"			\
 	-e "s;@SCHEMADIR@;${SCHEMADIR};"		\
+	-e "s;@TIMEOUT@;${TIMEOUT};"			\
 	-e "/^#/d"
