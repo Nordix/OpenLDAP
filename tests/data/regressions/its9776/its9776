@@ -1,0 +1,272 @@
+#! /bin/sh
+# $OpenLDAP$
+## This work is part of OpenLDAP Software <http://www.openldap.org/>.
+##
+## Copyright 1998-2021 The OpenLDAP Foundation.
+## All rights reserved.
+##
+## Redistribution and use in source and binary forms, with or without
+## modification, are permitted only as authorized by the OpenLDAP
+## Public License.
+##
+## A copy of this license is available in the file LICENSE in the
+## top-level directory of the distribution or, alternatively, at
+## <http://www.OpenLDAP.org/license.html>.
+#set -x
+
+echo "running defines.sh"
+. $SRCDIR/scripts/defines.sh
+
+if test $SYNCPROV = syncprovno; then
+	echo "Syncrepl provider overlay not available, test skipped"
+	exit 0
+fi
+
+mkdir -p $TESTDIR $TESTDIR/slapd.1.d $TESTDIR/slapd.2.d $DBDIR1 $DBDIR2
+
+echo "Creating configuration for server 1"
+$SLAPADD -F $TESTDIR/slapd.1.d -n 0 <<EOF
+dn: cn=config
+objectClass: olcGlobal
+cn: config
+olcServerID: 1 $URL1
+
+dn: olcDatabase={0}config,cn=config
+objectClass: olcDatabaseConfig
+olcDatabase: config
+olcRootPW: secret
+
+dn: cn=module,cn=config
+objectClass: olcModuleList
+cn: module
+olcModuleLoad: $TESTWD/../servers/slapd/back-$BACKEND/back_$BACKEND.la
+olcModuleLoad: $TESTWD/../servers/slapd/overlays/syncprov.la
+
+dn: cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: schema
+
+include: file://$ABS_SCHEMADIR/core.ldif
+include: file://$ABS_SCHEMADIR/cosine.ldif
+include: file://$ABS_SCHEMADIR/inetorgperson.ldif
+include: file://$ABS_SCHEMADIR/openldap.ldif
+include: file://$ABS_SCHEMADIR/nis.ldif
+
+dn: olcDatabase={1}$BACKEND,cn=config
+objectClass: olcDatabaseConfig
+objectClass: olc${BACKEND}Config
+olcDatabase: $BACKEND
+olcSuffix: dc=example,dc=com
+olcDbDirectory: $DBDIR1/
+olcRootDN: $MANAGERDN
+olcRootPW: $PASSWD
+olcSyncRepl: rid=1 provider=$URI1 binddn=$MANAGERDN bindmethod=simple
+  credentials=$PASSWD searchbase=$BASEDN type=refreshAndPersist
+  retry="5 5 300 5" timeout=1
+olcSyncRepl: rid=2 provider=$URI2 binddn=$MANAGERDN bindmethod=simple
+  credentials=$PASSWD searchbase=$BASEDN type=refreshAndPersist
+  retry="5 5 300 5" timeout=1
+olcMultiProvider: TRUE
+
+dn: olcOverlay=syncprov,olcDatabase={0}config,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcSyncProvConfig
+olcOverlay: syncprov
+olcSpCheckpoint: 100 10
+
+dn: olcOverlay=syncprov,olcDatabase={1}$BACKEND,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcSyncProvConfig
+olcOverlay: syncprov
+olcSpCheckpoint: 100 10
+
+dn: olcDatabase={3}monitor,cn=config
+objectClass: olcDatabaseConfig
+olcDatabase: {3}monitor
+EOF
+
+echo "Creating configuration for server 2"
+$SLAPADD -F $TESTDIR/slapd.2.d -n 0 <<EOF
+dn: cn=config
+objectClass: olcGlobal
+cn: config
+olcServerID: 2
+
+dn: olcDatabase={0}config,cn=config
+objectClass: olcDatabaseConfig
+olcDatabase: config
+olcRootPW: secret
+
+dn: cn=module,cn=config
+objectClass: olcModuleList
+cn: module
+olcModuleLoad: $TESTWD/../servers/slapd/back-$BACKEND/back_$BACKEND.la
+olcModuleLoad: $TESTWD/../servers/slapd/overlays/syncprov.la
+
+dn: cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: schema
+
+include: file://$ABS_SCHEMADIR/core.ldif
+include: file://$ABS_SCHEMADIR/cosine.ldif
+include: file://$ABS_SCHEMADIR/inetorgperson.ldif
+include: file://$ABS_SCHEMADIR/openldap.ldif
+include: file://$ABS_SCHEMADIR/nis.ldif
+
+dn: olcDatabase={1}$BACKEND,cn=config
+objectClass: olcDatabaseConfig
+objectClass: olc${BACKEND}Config
+olcDatabase: $BACKEND
+olcSuffix: $BASEDN
+olcDbDirectory: $DBDIR2/
+olcRootDN: $MANAGERDN
+olcRootPW: $PASSWD
+olcSyncRepl: rid=1 provider=$URI1 binddn=$MANAGERDN bindmethod=simple
+  credentials=$PASSWD searchbase=$BASEDN type=refreshAndPersist
+  retry="5 5 300 5" timeout=1
+olcSyncRepl: rid=2 provider=$URI2 binddn=$MANAGERDN bindmethod=simple
+  credentials=$PASSWD searchbase=$BASEDN type=refreshAndPersist
+  retry="5 5 300 5" timeout=1
+olcMultiProvider: TRUE
+
+dn: olcOverlay=syncprov,olcDatabase={0}config,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcSyncProvConfig
+olcOverlay: syncprov
+olcSpCheckpoint: 100 10
+
+dn: olcOverlay=syncprov,olcDatabase={1}$BACKEND,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcSyncProvConfig
+olcOverlay: syncprov
+olcSpCheckpoint: 100 10
+
+dn: olcDatabase={3}monitor,cn=config
+objectClass: olcDatabaseConfig
+olcDatabase: {3}monitor
+EOF
+
+echo "Adding users to server 2"
+$SLAPADD -F $TESTDIR/slapd.2.d -n 1 <<EOF
+dn: dc=example,dc=com
+objectclass: top
+objectclass: organization
+objectclass: dcobject
+dc: example
+o: Local
+
+dn: cn=user1,dc=example,dc=com
+objectClass: inetOrgPerson
+cn: user1
+sn: user
+EOF
+
+echo "Starting slapd on TCP/IP port $PORT1..."
+$SLAPD -F $TESTDIR/slapd.1.d  -h $URI1 -d $LVL > $LOG1 2>&1 &
+SERVER1PID=$!
+if test $WAIT != 0 ; then
+    echo SERVER1PID $SERVER1PID
+    read foo
+fi
+KILLPIDS="$KILLPIDS $SERVER1PID"
+
+echo "Using ldapsearch to check that slapd is running..."
+for i in 0 1 2 3 4 5; do
+	$LDAPSEARCH -s base -b "" -H $URI1 \
+		'objectclass=*' > /dev/null 2>&1
+	RC=$?
+	if test $RC = 0 ; then
+		break
+	fi
+	echo "Waiting $SLEEP0 seconds for slapd to start..."
+	sleep $SLEEP0
+done
+
+if test $RC != 0 ; then
+	echo "ldapsearch failed ($RC)!"
+	test $KILLSERVERS != no && kill -HUP $KILLPIDS
+	exit $RC
+fi
+
+
+echo "Starting slapd on TCP/IP port $PORT2..."
+$SLAPD -F $TESTDIR/slapd.2.d -h $URI2 -d $LVL > $LOG2 2>&1 &
+SERVER2PID=$!
+if test $WAIT != 0 ; then
+    echo SERVER2PID $SERVER2PID
+    read foo
+fi
+KILLPIDS="$KILLPIDS $SERVER2PID"
+
+echo "Using ldapsearch to check that slapd is running..."
+for i in 0 1 2 3 4 5; do
+	$LDAPSEARCH -s base -b "" -H $URI2 \
+		'objectclass=*' > /dev/null 2>&1
+	RC=$?
+	if test $RC = 0 ; then
+		break
+	fi
+	echo "Waiting $SLEEP0 seconds for slapd to start..."
+	sleep $SLEEP0
+done
+
+if test $RC != 0 ; then
+	echo "ldapsearch failed ($RC)!"
+	test $KILLSERVERS != no && kill -HUP $KILLPIDS
+	exit $RC
+fi
+
+#
+# Toggle consumer config on server 1 by deleting syncrepl and adding it again in a loop
+#
+
+i=1
+
+while true; do
+
+# NOTE
+#
+# - Number of tasks increases continuously
+# - Number of established connections to producer increases continuously (not shown by this script buy it can be observed by running lsof -p PID_OF_CONSUMER)
+#
+
+echo
+echo "Loop count: $i"
+echo 
+echo -n "Number of tasks in the tasklist:"
+ldapsearch -LLL -x -D cn=config -wsecret -b cn=Tasklist,cn=Threads,cn=Monitor -H ldap://localhost:9011/ monitoredInfo | grep monitoredInfo | wc -l
+echo 
+
+echo "Delete syncrepl consumer config"
+ldapmodify -D cn=config -H ldap://localhost:9011/ -wsecret <<EOF
+dn: olcDatabase={1}mdb,cn=config
+changetype: modify
+delete: olcSyncRepl
+-
+delete: olcMultiProvider
+EOF
+test $? != 0 && break
+
+
+echo "Add syncrepl consumer config"
+ldapmodify -D cn=config -H ldap://localhost:9011/ -wsecret <<EOF
+dn: olcDatabase={1}mdb,cn=config
+changetype: modify
+add: olcSyncRepl
+olcSyncRepl: rid=1 provider=ldap://localhost:9011/ binddn="cn=Manager,dc=example,dc=com" bindmethod=simple
+  credentials=secret searchbase="dc=example,dc=com" type=refreshAndPersist
+  retry="5 5 300 5" timeout=1
+olcSyncRepl: rid=2 provider=ldap://localhost:9012/ binddn="cn=Manager,dc=example,dc=com" bindmethod=simple
+  credentials=secret searchbase="dc=example,dc=com" type=refreshAndPersist
+  retry="5 5 300 5" timeout=1
+-
+add: olcMultiProvider
+olcMultiProvider: TRUE
+EOF
+test $? != 0 && break
+
+i=`expr $i + 1`
+
+done
+
+
